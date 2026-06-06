@@ -1,0 +1,10 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+.ipynb_checkpoints/
+Template\ Penulisan\ Proposal\ dan\ Tugas\ Akhir\ KK\ ICS.docx
+Template\ Penulisan\ Proposal\ dan\ Tugas\ Akhir\ KK\ ICS.pdf
+Template Penulisan Proposal dan Tugas Akhir KK ICS.docx
+Template Penulisan Proposal dan Tugas Akhir KK ICS.pdf
