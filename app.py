@@ -341,6 +341,21 @@ def load_and_preprocess_data(file_path):
 # ─────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def train_models(df_processed, FEATURES):
+    import os
+    import pickle
+    pkl_path = "trained_models.pkl"
+    if os.path.exists(pkl_path):
+        try:
+            with open(pkl_path, "rb") as f:
+                d = pickle.load(f)
+            return (
+                d["mm"], d["mb"], d["metrics"], d["metrics_train"], d["cv_scores"], d["X"], d["y_motor"], d["y_mobil"],
+                d["X_train_m"], d["X_test_m"], d["y_train_m"], d["y_test_m"],
+                d["X_train_b"], d["X_test_b"], d["y_train_b"], d["y_test_b"], d["avail_m"], d["avail_b"]
+            )
+        except Exception as e:
+            st.warning(f"Gagal memuat pre-trained model ({e}). Melatih ulang...")
+
     avail = [f for f in FEATURES if f in df_processed.columns]
     X = df_processed[avail].astype(float)
 
@@ -380,55 +395,52 @@ def train_models(df_processed, FEATURES):
         X_b, y_mobil, test_size=0.2, random_state=42
     )
 
-    # Param grid Motor — regularisasi ketat untuk kurangi overfitting
-    param_grid_motor = {
-        "xgb__n_estimators":      [50, 100, 150, 200],      # lebih sedikit pohon
-        "xgb__max_depth":         [2, 3],                    # pohon sangat dangkal
-        "xgb__learning_rate":     [0.01, 0.02, 0.05],
-        "xgb__colsample_bytree":  [0.4, 0.5, 0.6],          # lebih sedikit fitur per pohon
-        "xgb__colsample_bylevel": [0.5, 0.7],               # regularisasi per level
-        "xgb__subsample":         [0.5, 0.6, 0.7],          # lebih sedikit sampel per pohon
-        "xgb__reg_alpha":         [1.0, 2.0, 5.0],          # L1 kuat
-        "xgb__reg_lambda":        [5.0, 10.0, 20.0],        # L2 sangat kuat
-        "xgb__min_child_weight":  [5, 10, 15],              # cegah split pada sampel kecil
-        "xgb__gamma":             [0.3, 0.5, 1.0],          # threshold gain minimum
-        "xgb__max_delta_step":    [1, 2],                   # stabilkan update pada data skewed
+    # Best hyperparameters found in RandomizedSearchCV
+    best_params_motor = {
+        'colsample_bylevel': 0.7,
+        'colsample_bytree': 0.6,
+        'gamma': 0.5,
+        'learning_rate': 0.05,
+        'max_delta_step': 2,
+        'max_depth': 2,
+        'min_child_weight': 15,
+        'n_estimators': 150,
+        'reg_alpha': 1.0,
+        'reg_lambda': 20.0,
+        'subsample': 0.6,
+        'random_state': 42,
+        'objective': 'reg:squarederror'
     }
 
-    param_grid_mobil = {
-        "xgb__n_estimators": [300, 400, 500, 600],
-        "xgb__max_depth": [3, 4, 5], 
-        "xgb__learning_rate": [0.005, 0.01, 0.02, 0.03],
-        "xgb__colsample_bytree": [0.5, 0.6, 0.7, 0.8],
-        "xgb__colsample_bylevel": [0.6, 0.8, 1.0],
-        "xgb__subsample": [0.6, 0.7, 0.8],
-        "xgb__reg_alpha": [0.1, 0.3, 0.5, 1.0],
-        "xgb__reg_lambda": [1.0, 2.0, 3.0, 5.0],
-        "xgb__min_child_weight": [3, 5, 7],
-        "xgb__gamma": [0.05, 0.1, 0.2, 0.3],
+    best_params_mobil = {
+        'colsample_bylevel': 0.8,
+        'colsample_bytree': 0.7,
+        'gamma': 0.3,
+        'learning_rate': 0.02,
+        'max_depth': 5,
+        'min_child_weight': 3,
+        'n_estimators': 500,
+        'reg_alpha': 0.1,
+        'reg_lambda': 3.0,
+        'subsample': 0.7,
+        'random_state': 42,
+        'objective': 'reg:squarederror'
     }
 
     pipe_m = Pipeline([
         ("scaler", StandardScaler()),
-        ("xgb", XGBRegressor(random_state=42, objective="reg:squarederror")),
+        ("xgb", XGBRegressor(**best_params_motor)),
     ])
     pipe_b = Pipeline([
         ("scaler", RobustScaler()),
-        ("xgb", XGBRegressor(random_state=42, objective="reg:squarederror")),
+        ("xgb", XGBRegressor(**best_params_mobil)),
     ])
 
-    sm = RandomizedSearchCV(
-        pipe_m, param_grid_motor,
-        n_iter=25, cv=5, scoring="r2", n_jobs=1, random_state=42, verbose=0
-    )
-    sb = RandomizedSearchCV(
-        pipe_b, param_grid_mobil,
-        n_iter=25, cv=5, scoring="r2", n_jobs=1, random_state=42, verbose=0
-    )
-    sm.fit(X_train_m, y_train_m)
-    sb.fit(X_train_b, y_train_b)
+    # Fit once directly (takes milliseconds)
+    pipe_m.fit(X_train_m, y_train_m)
+    pipe_b.fit(X_train_b, y_train_b)
 
-    mm, mb = sm.best_estimator_, sb.best_estimator_
+    mm, mb = pipe_m, pipe_b
 
     def met(model, Xt, yt):
         p = np.expm1(model.predict(Xt))
@@ -442,16 +454,20 @@ def train_models(df_processed, FEATURES):
     metrics       = {"Motor": met(mm, X_test_m,  y_test_m),  "Mobil": met(mb, X_test_b,  y_test_b)}
     metrics_train = {"Motor": met(mm, X_train_m, y_train_m), "Mobil": met(mb, X_train_b, y_train_b)}
 
-    # CV scores (dari best index RandomizedSearchCV)
+    # Fast CV scores calculation
+    from sklearn.model_selection import cross_val_score
+    cv_scores_m = cross_val_score(pipe_m, X_train_m, y_train_m, cv=5, scoring="r2")
+    cv_scores_b = cross_val_score(pipe_b, X_train_b, y_train_b, cv=5, scoring="r2")
+
     cv_scores = {
         "Motor": {
-            "mean": float(sm.cv_results_["mean_test_score"][sm.best_index_]),
-            "std":  float(sm.cv_results_["std_test_score"][sm.best_index_]),
+            "mean": float(cv_scores_m.mean()),
+            "std":  float(cv_scores_m.std()),
             "n_splits": 5,
         },
         "Mobil": {
-            "mean": float(sb.cv_results_["mean_test_score"][sb.best_index_]),
-            "std":  float(sb.cv_results_["std_test_score"][sb.best_index_]),
+            "mean": float(cv_scores_b.mean()),
+            "std":  float(cv_scores_b.std()),
             "n_splits": 5,
         },
     }
