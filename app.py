@@ -1304,7 +1304,7 @@ elif page == "Hasil Rekomendasi":
 # ║  PAGE 6 — MAP                                           ║
 # ╚══════════════════════════════════════════════════════════╝
 elif page == "Map":
-    ph("🗺️", "Map", "Rekomendasi tarif adaptif berbasis prediksi XGBoost & kuantil Q25/Q75")
+    ph("🗺️", "Map", "Rekomendasi tarif adaptif berbasis prediksi XGBoost & median 170%/30%")
 
     # Helper function to generate deep structured causes based on XGBoost features
     def generate_causes(row, vehicle_type, mean_vals):
